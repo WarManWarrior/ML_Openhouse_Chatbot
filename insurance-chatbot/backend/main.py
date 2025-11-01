@@ -16,13 +16,20 @@ class InsuranceRAGChatbot:
         self.llm_pipeline = None
         self._load_data(data_directory)
         self._initialize_llm()
+        self.messages = [
+                {"role": "system", "content": ("You are an expert insurance support agent. Your task is to answer the user's query with "
+            "professionalism and accuracy, using *only* the information provided in the context. "
+            "Do not infer or assume any information. If the answer is not in the context, "
+            "state that you cannot find the information in their records.")},
+            ]
 
     def _initialize_llm(self):
         print("\nInitializing the Language Model (this may take a moment)...")
         try:
             self.llm_pipeline = pipeline(
                 "text-generation",
-                model="Qwen/Qwen1.5-0.5B-Chat",
+                # model="Qwen/Qwen1.5-0.5B-Chat",
+                model="Qwen/Qwen3-0.6B",
                 torch_dtype="auto"
             )
             print("LLM initialized successfully!")
@@ -54,9 +61,14 @@ class InsuranceRAGChatbot:
         }
         for id_type, pattern in patterns.items():
             match = re.search(pattern, query.upper())
+            match_on_msg =re.search(pattern , self.messages[-1]['content'].upper())
             if match:
                 found_id = match.group(0)
                 print(f"🔎 Found {id_type}: {found_id}")
+                return found_id, id_type
+            elif match_on_msg:
+                found_id = match_on_msg.group(0)
+                print(f"🔎 Found {id_type} in previous message: {found_id}")
                 return found_id, id_type
         return None, None
 
@@ -94,52 +106,57 @@ class InsuranceRAGChatbot:
             for _, row in self.faq_df.iterrows():
                 if query.lower() in str(row['Question']).lower():
                     return row['Answer']
-        return "I couldn't find a specific ID in your question or a relevant FAQ. Could you please rephrase?"
+        # return "I couldn't find a specific ID in your question or a relevant FAQ. Could you please rephrase?"
+        return -1
+    
 
     def generate_response(self, query):
         if not self.llm_pipeline:
             return "The Language Model is not available. Please check the initialization errors."
-        found_id, id_type = self._find_id_and_data(query)
-        if found_id:
-            context = self._lookup_context(found_id, id_type)
-            # Compile all info together for LLM prompt
-            messages = [
-                {"role": "system", "content": ("You are an expert insurance support agent. Your task is to answer the user's query with "
-            "professionalism and accuracy, using *only* the information provided in the context. "
-            "Do not infer or assume any information. If the answer is not in the context, "
-            "state that you cannot find the information in their records.")},
-            ]
-            info_lines = []
-            if 'policy' in context:
-                info_lines.append("Policy Details:")
-                for k, v in context['policy'].items():
-                    info_lines.append(f"{k}: {v}")
-            if 'claim' in context:
-                info_lines.append("Claim Details:")
-                for k, v in context['claim'].items():
-                    info_lines.append(f"{k}: {v}")
-                # FAQ context for claim remark
-                claim_remark = context['claim'].get('Remarks','') if 'claim' in context else ''
-                if claim_remark:
-                    faq_expl = self._faq_explanation('claim')
-                    if faq_expl:
-                        info_lines.append(f"\nFAQ: {faq_expl}")
-            # If we have context, ask the LLM to answer using it
-            if info_lines:
-                messages.append({"role": "user", "content": f"Context:\n" + '\n'.join(info_lines) + f"\nQuery: {query}\nAnswer:"})
-                prompt = self.llm_pipeline.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                outputs = self.llm_pipeline(prompt, max_new_tokens=128, do_sample=True, temperature=0.7, top_k=50, top_p=0.95)
-                llm_answer = outputs[0]["generated_text"].split("Answer:")[1].strip()
-                return llm_answer
-            # If only ID was found but no context
+        
+        general_query = self.answer_general_question(query)
+        if general_query == -1:
+
+            found_id, id_type = self._find_id_and_data(query)
+
+            if found_id:
+                context = self._lookup_context(found_id, id_type)
+                # Compile all info together for LLM prompt
+                
+                info_lines = []
+                if 'policy' in context:
+                    info_lines.append("Policy Details:")
+                    for k, v in context['policy'].items():
+                        info_lines.append(f"{k}: {v}")
+                if 'claim' in context:
+                    info_lines.append("Claim Details:")
+                    for k, v in context['claim'].items():
+                        info_lines.append(f"{k}: {v}")
+                    # FAQ context for claim remark
+                    claim_remark = context['claim'].get('Remarks','') if 'claim' in context else ''
+                    if claim_remark:
+                        faq_expl = self._faq_explanation('claim')
+                        if faq_expl:
+                            info_lines.append(f"\nFAQ: {faq_expl}")
+                # If we have context, ask the LLM to answer using it
+                if info_lines:
+                    self.messages.append({"role": "user", "content": f"Context:\n" + '\n'.join(info_lines) + f"\nQuery: {query}\nAnswer:"})
+                    prompt = self.llm_pipeline.tokenizer.apply_chat_template(self.messages, tokenize=False, add_generation_prompt=True)
+                    outputs = self.llm_pipeline(prompt, max_new_tokens=128, do_sample=True, temperature=0.7, top_k=50, top_p=0.95)
+                    llm_answer = outputs[0]["generated_text"].split("Answer:")[1].strip()
+                    return llm_answer
+                # If only ID was found but no context
+                else:
+                    faq_response = self._faq_explanation('policy' if id_type=='Policy_Number' else 'claim')
+                    return (
+                        f"I recognized the {id_type.replace('_', ' ')} '{found_id}', but couldn't find any corresponding records. " +
+                        (faq_response if faq_response else "")
+                    )
             else:
-                faq_response = self._faq_explanation('policy' if id_type=='Policy_Number' else 'claim')
-                return (
-                    f"I recognized the {id_type.replace('_', ' ')} '{found_id}', but couldn't find any corresponding records. " +
-                    (faq_response if faq_response else "")
-                )
+                # return self.answer_general_question(query)
+                return "I couldn't find a specific ID in your question or a relevant FAQ. Could you please rephrase?"
         else:
-            return self.answer_general_question(query)
+            return general_query
 
 # --- Main Execution Block ---
 if __name__ == "__main__":
