@@ -22,14 +22,21 @@ class InsuranceRAGChatbot:
             "Do not infer or assume any information. If the answer is not in the context, "
             "state that you cannot find the information in their records.")},
             ]
-
+    def _reset_message(self):
+        self.messages = [
+                {"role": "system", "content": ("You are an expert insurance support agent. Your task is to answer the user's query with "
+            "professionalism and accuracy, using *only* the information provided in the context. "
+            "Do not infer or assume any information. If the answer is not in the context, "
+            "state that you cannot find the information in their records.")},
+        ]
+    
     def _initialize_llm(self):
         print("\nInitializing the Language Model (this may take a moment)...")
         try:
             self.llm_pipeline = pipeline(
                 "text-generation",
-                # model="Qwen/Qwen1.5-0.5B-Chat",
-                model="Qwen/Qwen3-0.6B",
+                model="Qwen/Qwen1.5-0.5B-Chat",
+                # model="Qwen/Qwen3-0.6B",
                 torch_dtype="auto"
             )
             print("LLM initialized successfully!")
@@ -53,23 +60,33 @@ class InsuranceRAGChatbot:
             print(f"Error: The directory '{data_directory}' was not found.")
 
     def _find_id_and_data(self, query):
+        
         # Patterns for IDs
         patterns = {
             'Policy_Number': r'POL\d{3}[A-Z]',
             'Customer_ID': r'CUST\d+',
             'Claim_ID': r'\b\d{4}\b'
         }
+
+        
         for id_type, pattern in patterns.items():
             match = re.search(pattern, query.upper())
-            match_on_msg =re.search(pattern , self.messages[-1]['content'].upper())
             if match:
                 found_id = match.group(0)
                 print(f"🔎 Found {id_type}: {found_id}")
+                
+                # reset the msgs if new id is found on the query
+                self._reset_message()
+
                 return found_id, id_type
-            elif match_on_msg:
+        
+        for id_type , pattern in patterns.items():
+            match_on_msg = re.search(pattern , self.messages[-1]['content'].upper())
+            if match_on_msg:
                 found_id = match_on_msg.group(0)
-                print(f"🔎 Found {id_type} in previous message: {found_id}")
+                print(f"🔎 Found in message : {id_type}: {found_id}")
                 return found_id, id_type
+
         return None, None
 
     def _lookup_context(self, found_id, id_type):
