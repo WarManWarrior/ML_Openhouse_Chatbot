@@ -1,13 +1,9 @@
-langchain
-langchain-community
+pandas
 torch
 transformers
-sentence-transformers
-faiss-cpu
-unstructured
-gradio
+sentencepiece
 accelerate
-bitsandbytes
-langchain-huggingface
+numpy
+faiss-cpu
 fastapi
 uvicorn
