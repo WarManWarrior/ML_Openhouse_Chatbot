@@ -173,8 +173,16 @@ class InsuranceRAGChatbot:
                 if info_lines:
                     self.messages.append({"role": "user", "content": f"Context:\n" + '\n'.join(info_lines) + f"\nQuery: {query}\nAnswer:"})
                     prompt = self.llm_pipeline.tokenizer.apply_chat_template(self.messages, tokenize=False, add_generation_prompt=True)
-                    outputs = self.llm_pipeline(prompt, max_new_tokens=128, do_sample=True, temperature=0.7, top_k=50, top_p=0.95)
-                    llm_answer = outputs[0]["generated_text"].split("Answer:")[1].strip()
+                    outputs = self.llm_pipeline(
+                        prompt,
+                        max_new_tokens=128,
+                        do_sample=True,
+                        temperature=0.7,
+                        top_k=50,
+                        top_p=0.95,
+                        return_full_text=False
+                    )
+                    llm_answer = outputs[0]["generated_text"].strip()
                     return llm_answer
                 # If only ID was found but no context
                 else:
